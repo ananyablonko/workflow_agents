@@ -1,6 +1,5 @@
-from sys import path as p; from pathlib import Path; from dotenv import find_dotenv;
-[p.extend([str(d), str(d.parent)]) for f in {find_dotenv("config.py"), __file__} if (d := Path(f).resolve().parent) not in p]
-
 from gather_agent import GatherAgent
+from lambda_agent import LambdaAgent
+from recursive_agent import RecursiveAgent
 
-__all__ = ['GatherAgent']
+__all__ = ['GatherAgent', 'LambdaAgent', 'RecursiveAgent']
