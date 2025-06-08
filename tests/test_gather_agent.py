@@ -1,15 +1,14 @@
 import __init__
 import asyncio
-
+import dotenv
+dotenv.load_dotenv()
 import logging, sys
 logger = logging.Logger(__name__)
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 from pydantic import RootModel
 from google.adk.agents import LlmAgent, SequentialAgent
-from google.adk.sessions import Session
-
-from syllabus_agent.worflow_agents.gather_agent import GatherAgent
-from utils.run_agent import run_agent
+from agent_tester import AgentTester
+from gather_agent import GatherAgent
 
 async def test_gather_agent():
     class ListModel(RootModel[list[str]]):
@@ -44,25 +43,21 @@ async def test_gather_agent():
     start = '1'
     expected_output = {('1', '2', '3'), ('2', '3', '4'), ('3', '4', '5')}
 
-    async for state_delta in run_agent(
-        app_agent,
-        start,
-        check = lambda e: True,
-        func = lambda e: e.actions.state_delta
-    ):
-        if isinstance(state_delta, Session):
-            break
+    agent = AgentTester(
+        agent=app_agent,
+        check=lambda e: True,
+        extract=lambda e: e.actions.state_delta
+    )
+    async for state_delta in agent.run(start):
         assert splitter.output_key in state_delta
         splitter_output = state_delta[splitter.output_key]
         assert isinstance(splitter_output, list)
         assert tuple(splitter_output) in expected_output
 
-    session = state_delta
-
-    assert session is not None
-    res = session.state.get(gather.output_key)
-    assert isinstance(res, dict)
-    assert set([tuple(x) for x in res.values()]) == expected_output
+    assert agent.session is not None
+    res = agent.session.state.get(gather.output_key)
+    assert isinstance(res, list)
+    assert set([tuple(x) for x in res]) == expected_output
 
 
 
