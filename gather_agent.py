@@ -1,5 +1,6 @@
 import typing
-from typing import AsyncGenerator, Callable, Any, Optional
+import asyncio
+from typing import AsyncGenerator, Callable, Any, Optional, ClassVar
 from typing_extensions import override
 from google.adk.agents import BaseAgent, SequentialAgent
 from google.adk.agents.invocation_context import InvocationContext
@@ -20,16 +21,30 @@ def get_output_key(agent: BaseAgent) -> str:
     return key
 
 
-
 class GatherAgent(BaseAgent):
-    name: str
-    description: str = ''
+    branch_prefix: ClassVar[str] = '_gather_branch_'
+
     agent: BaseAgent
     input_key: str
     output_key: str
     state_callback: Optional[
         Callable[[InvocationContext], Any]
-    ] = None
+    ]
+
+    def __init__(self,
+                name: str,
+                agent: BaseAgent,
+                input_key: str,
+                output_key: str,
+                description: str = '',
+                state_callback: Optional[
+                    Callable[[InvocationContext], Any]
+                ] = None,
+                ):
+        super().__init__(
+            name=name, description=description, sub_agents=[agent],
+            agent=agent, input_key=input_key, output_key=output_key, state_callback=state_callback  # type: ignore
+        )  
 
     @override
     async def _run_async_impl(
@@ -40,32 +55,22 @@ class GatherAgent(BaseAgent):
         if isinstance(prompts, dict):
             prompts = typing.cast(list[str], list[prompts.values()])
 
-        runs = []
-        for i, prompt in enumerate(prompts):
-            branch = f"{invocation_context.branch}._gather_branch_{i}"
-            ctx = invocation_context.model_copy(
-                update=dict(
-                    branch=branch,
-                    session=invocation_context.session.model_copy(),
-                    agent=self.agent
-                )
+        contexts = await asyncio.gather(*[
+            self._branch_context(
+                invocation_context,
+                branch_idx=i,
+                prompt=prompt,
             )
-            event = Event(
-                author="user",
-                branch=branch,
-                content=Content(
-                    role="user",
-                    parts=[Part(text=prompt)],
-                ),
-            )
-            await ctx.session_service.append_event(ctx.session, event)
-            runs.append(ctx.agent.run_async(ctx))
+            for i, prompt in enumerate(prompts)
+        ])
 
-        res = {}
-        async for event in _merge_agent_run(runs):
+        res = [None] * len(prompts)
+        async for event in _merge_agent_run([ctx.agent.run_async(ctx) for ctx in contexts]):
             yield event
-            if event.actions and event.actions.state_delta:
-                res[event.branch] = (
+            if event.actions and event.actions.state_delta and event.branch:
+                idx = int(event.branch.split(self.branch_prefix)[-1].split('.')[0])
+                ctx = contexts[idx]
+                res[idx] = (
                     self.state_callback(ctx) if self.state_callback is not None else ctx.session.state.get(get_output_key(self.agent))
                 )
 
@@ -74,3 +79,23 @@ class GatherAgent(BaseAgent):
             actions=EventActions(state_delta={self.output_key: res}),
         )
         await invocation_context.session_service.append_event(invocation_context.session, event)
+        
+
+    async def _branch_context(self, old_ctx: InvocationContext, *, branch_idx: int, prompt: str) -> InvocationContext:
+        branch_name = f"{old_ctx.branch}.{self.branch_prefix}{branch_idx}"
+        ctx = old_ctx.model_copy(
+            update=dict(
+                branch=branch_name,
+                agent=self.agent
+            )
+        )
+        event = Event(
+            author="user",
+            branch=branch_name,
+            content=Content(
+                role="user",
+                parts=[Part(text=prompt)],
+            ),
+        )
+        await ctx.session_service.append_event(ctx.session, event)
+        return ctx
