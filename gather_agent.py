@@ -1,12 +1,15 @@
 import typing
 import asyncio
-from typing import AsyncGenerator, Callable, Any, Optional, ClassVar
+from typing import AsyncGenerator, ClassVar
 from typing_extensions import override
 from google.adk.agents import BaseAgent, SequentialAgent
 from google.adk.agents.invocation_context import InvocationContext
 from google.adk.events import Event, EventActions
 from google.adk.agents.parallel_agent import _merge_agent_run
 from google.genai.types import Content, Part
+from google.genai import types
+
+import re
 
 def get_output_key(agent: BaseAgent) -> str:
     key = None
@@ -27,9 +30,6 @@ class GatherAgent(BaseAgent):
     agent: BaseAgent
     input_key: str
     output_key: str
-    state_callback: Optional[
-        Callable[[InvocationContext], Any]
-    ]
 
     def __init__(self,
                 name: str,
@@ -37,14 +37,13 @@ class GatherAgent(BaseAgent):
                 input_key: str,
                 output_key: str,
                 description: str = '',
-                state_callback: Optional[
-                    Callable[[InvocationContext], Any]
-                ] = None,
                 ):
         super().__init__(
             name=name, description=description, sub_agents=[agent],
-            agent=agent, input_key=input_key, output_key=output_key, state_callback=state_callback  # type: ignore
+            agent=agent, input_key=input_key, output_key=output_key  # type: ignore
         )  
+
+        self._agent_output_key = get_output_key(agent)
 
     @override
     async def _run_async_impl(
@@ -68,11 +67,9 @@ class GatherAgent(BaseAgent):
         async for event in _merge_agent_run([ctx.agent.run_async(ctx) for ctx in contexts]):
             yield event
             if event.actions and event.actions.state_delta and event.branch:
-                idx = int(event.branch.split(self.branch_prefix)[-1].split('.')[0])
+                idx = int(re.findall(fr'(?<={self.branch_prefix})\d+', event.branch)[0])
                 ctx = contexts[idx]
-                res[idx] = (
-                    self.state_callback(ctx) if self.state_callback is not None else ctx.session.state.get(get_output_key(self.agent))
-                )
+                res[idx] = ctx.session.state.get(self._agent_output_key)
 
         event = Event(
             author=self.name,
@@ -83,12 +80,6 @@ class GatherAgent(BaseAgent):
 
     async def _branch_context(self, old_ctx: InvocationContext, *, branch_idx: int, prompt: str) -> InvocationContext:
         branch_name = f"{old_ctx.branch}.{self.branch_prefix}{branch_idx}"
-        ctx = old_ctx.model_copy(
-            update=dict(
-                branch=branch_name,
-                agent=self.agent
-            )
-        )
         event = Event(
             author="user",
             branch=branch_name,
@@ -97,5 +88,16 @@ class GatherAgent(BaseAgent):
                 parts=[Part(text=prompt)],
             ),
         )
+        ctx = old_ctx.model_copy(
+            update=dict(
+                branch=branch_name,
+                agent=self.agent.model_copy(update=dict(name=f"{self.agent.name}_{branch_idx}")),
+                user_content=old_ctx.user_content.model_copy(deep=True) if old_ctx.user_content else types.Content(role="user", parts=[]),
+            )
+        )
+        
+        if ctx.user_content is not None and ctx.user_content.parts is not None:
+            ctx.user_content.parts.append(types.Part(text=prompt))
+       
         await ctx.session_service.append_event(ctx.session, event)
         return ctx
