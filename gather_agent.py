@@ -1,13 +1,14 @@
 import typing
 import asyncio
-from typing import AsyncGenerator, ClassVar
+from typing import AsyncGenerator, ClassVar, Optional
 from typing_extensions import override
-from google.adk.agents import BaseAgent, SequentialAgent
+from google.adk.agents import BaseAgent, SequentialAgent, LoopAgent
 from google.adk.agents.invocation_context import InvocationContext
 from google.adk.events import Event, EventActions
 from google.adk.agents.parallel_agent import _merge_agent_run
 from google.genai.types import Content, Part
 from google.genai import types
+from copy import deepcopy
 
 import re
 
@@ -37,13 +38,14 @@ class GatherAgent(BaseAgent):
                 input_key: str,
                 output_key: str,
                 description: str = '',
+                agent_output_key: Optional[str] = None,
                 ):
         super().__init__(
             name=name, description=description, sub_agents=[agent],
             agent=agent, input_key=input_key, output_key=output_key  # type: ignore
         )  
 
-        self._agent_output_key = get_output_key(agent)
+        self._agent_output_key = agent_output_key or get_output_key(agent)
 
     @override
     async def _run_async_impl(
@@ -63,13 +65,12 @@ class GatherAgent(BaseAgent):
             for i, prompt in enumerate(prompts)
         ])
 
-        res = [None] * len(prompts)
+        res: list = [None] * len(prompts)
         async for event in _merge_agent_run([ctx.agent.run_async(ctx) for ctx in contexts]):
             yield event
             if event.actions and event.actions.state_delta and event.branch:
                 idx = int(re.findall(fr'(?<={self.branch_prefix})\d+', event.branch)[0])
-                ctx = contexts[idx]
-                res[idx] = ctx.session.state.get(self._agent_output_key)
+                res[idx] = deepcopy(event.actions.state_delta[self._agent_output_key])
 
         event = Event(
             author=self.name,
