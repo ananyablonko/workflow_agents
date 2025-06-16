@@ -3,6 +3,7 @@ from typing import Optional, cast, AsyncGenerator, Callable, Any, TypedDict
 from pydantic import BaseModel, Field, PrivateAttr
 from google.adk.agents import BaseAgent
 from google.adk.runners import Runner
+from google.adk.artifacts import InMemoryArtifactService
 from google.adk.sessions import Session, InMemorySessionService
 from google.genai import types
 from gather_agent import get_output_key
@@ -23,7 +24,7 @@ class AgentTester(BaseModel):
     def model_post_init(self, context: Any) -> None:
         super().model_post_init(context)
         self._s = UserSession(user_id="0", session_id="0")
-        self._r = Runner(agent=self.agent, app_name="0", session_service=InMemorySessionService())
+        self._r = Runner(agent=self.agent, app_name="0", session_service=InMemorySessionService(), artifact_service=InMemoryArtifactService())
         self._t = asyncio.create_task(self._r.session_service.create_session(app_name=self._r.app_name, state=self.initial_state, **self._s))
     
     def is_done(self):

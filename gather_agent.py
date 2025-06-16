@@ -1,8 +1,9 @@
 import typing
 import asyncio
-from typing import AsyncGenerator, ClassVar, Optional
+from pydantic import BaseModel
+from typing import AsyncGenerator, Optional, Any
 from typing_extensions import override
-from google.adk.agents import BaseAgent, SequentialAgent, LoopAgent
+from google.adk.agents import BaseAgent, SequentialAgent
 from google.adk.agents.invocation_context import InvocationContext
 from google.adk.events import Event, EventActions
 from google.adk.agents.parallel_agent import _merge_agent_run
@@ -26,8 +27,6 @@ def get_output_key(agent: BaseAgent) -> str:
 
 
 class GatherAgent(BaseAgent):
-    branch_prefix: ClassVar[str] = '_gather_branch_'
-
     agent: BaseAgent
     input_key: str
     output_key: str
@@ -43,7 +42,7 @@ class GatherAgent(BaseAgent):
                 ):
         super().__init__(
             name=name, description=description, sub_agents=[agent],
-            agent=agent, input_key=input_key, output_key=output_key  # type: ignore
+            agent=agent, input_key=input_key, output_key=output_key,  # type: ignore
             **kwargs
         )  
 
@@ -53,10 +52,8 @@ class GatherAgent(BaseAgent):
     async def _run_async_impl(
         self, invocation_context: InvocationContext
     ) -> AsyncGenerator[Event, None]:
-        invocation_context.branch = f"{invocation_context.branch}.{self.name}" if invocation_context.branch else self.name
-        prompts: list[str] | dict = invocation_context.session.state.get(self.input_key, [])
-        if isinstance(prompts, dict):
-            prompts = typing.cast(list[str], list[prompts.values()])
+        invocation_context.branch = invocation_context.branch or self.name
+        prompts: list[Any] = invocation_context.session.state.get(self.input_key, [])
 
         contexts = await asyncio.gather(*[
             self._branch_context(
@@ -67,40 +64,43 @@ class GatherAgent(BaseAgent):
             for i, prompt in enumerate(prompts)
         ])
 
-        res: list = [None] * len(prompts)
+        res: list = [None for _ in range(len(prompts))]
         async for event in _merge_agent_run([ctx.agent.run_async(ctx) for ctx in contexts]):
             yield event
             if event.actions and self._agent_output_key in event.actions.state_delta and event.branch:
-                idx = int(re.findall(fr'(?<={self.branch_prefix})\d+', event.branch)[0])
+                idx = int(re.findall(fr'(?<={self.agent.name}_)\d+', event.branch)[-1])
                 res[idx] = deepcopy(event.actions.state_delta[self._agent_output_key])
 
         event = Event(
+            invocation_id=invocation_context.invocation_id,
+            branch=invocation_context.branch,
             author=self.name,
+            content=types.Content(role='model', parts=[Part(text=str(res))]),
             actions=EventActions(state_delta={self.output_key: res}),
         )
-        await invocation_context.session_service.append_event(invocation_context.session, event)
+        yield event
         
 
-    async def _branch_context(self, old_ctx: InvocationContext, *, branch_idx: int, prompt: str) -> InvocationContext:
-        branch_name = f"{old_ctx.branch}.{self.branch_prefix}{branch_idx}"
-        event = Event(
-            author="user",
-            branch=branch_name,
-            content=Content(
-                role="user",
-                parts=[Part(text=prompt)],
-            ),
-        )
+    async def _branch_context(self, old_ctx: InvocationContext, *, branch_idx: int, prompt: Any) -> InvocationContext:
+        # rename the agent to have branch idx in its name (and consequently its branch), and copy user contents to allow appending to it in branch only
         ctx = old_ctx.model_copy(
             update=dict(
-                branch=branch_name,
                 agent=self.agent.model_copy(update=dict(name=f"{self.agent.name}_{branch_idx}")),
                 user_content=old_ctx.user_content.model_copy(deep=True) if old_ctx.user_content else types.Content(role="user", parts=[]),
             )
         )
+        text: str = prompt.model_dump_json() if isinstance(prompt, BaseModel) else str(prompt)
+        event = Event(
+            author="user",
+            branch=f"{old_ctx.branch}.{ctx.agent.name}",  # event only visible to one instance
+            content=Content(
+                role="user",
+                parts=[Part(text=text)],
+            ),
+        )
         
         if ctx.user_content is not None and ctx.user_content.parts is not None:
-            ctx.user_content.parts.append(types.Part(text=prompt))
+            ctx.user_content.parts.append(types.Part(text=text))
        
         await ctx.session_service.append_event(ctx.session, event)
         return ctx

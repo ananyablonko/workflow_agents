@@ -49,13 +49,17 @@ async def test_gather_agent():
         extract=lambda e: e.actions.state_delta
     )
     async for state_delta in agent.run(start):
-        assert splitter.output_key in state_delta
-        splitter_output = state_delta[splitter.output_key]
-        assert isinstance(splitter_output, list)
-        assert tuple(splitter_output) in expected_output
+        if splitter.output_key in state_delta:
+            splitter_output = state_delta[splitter.output_key]
+            assert isinstance(splitter_output, list)
+            assert tuple(splitter_output) in expected_output
+        else:
+            assert gather.output_key in state_delta
+            gather_output = state_delta[gather.output_key]
 
     assert agent.session is not None
     res = agent.session.state.get(gather.output_key)
+    assert gather_output == res
     assert isinstance(res, list)
     assert set([tuple(x) for x in res]) == expected_output
 
