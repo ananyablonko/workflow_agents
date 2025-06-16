@@ -39,10 +39,12 @@ class GatherAgent(BaseAgent):
                 output_key: str,
                 description: str = '',
                 agent_output_key: Optional[str] = None,
+                **kwargs
                 ):
         super().__init__(
             name=name, description=description, sub_agents=[agent],
             agent=agent, input_key=input_key, output_key=output_key  # type: ignore
+            **kwargs
         )  
 
         self._agent_output_key = agent_output_key or get_output_key(agent)
@@ -68,7 +70,7 @@ class GatherAgent(BaseAgent):
         res: list = [None] * len(prompts)
         async for event in _merge_agent_run([ctx.agent.run_async(ctx) for ctx in contexts]):
             yield event
-            if event.actions and event.actions.state_delta and event.branch:
+            if event.actions and self._agent_output_key in event.actions.state_delta and event.branch:
                 idx = int(re.findall(fr'(?<={self.branch_prefix})\d+', event.branch)[0])
                 res[idx] = deepcopy(event.actions.state_delta[self._agent_output_key])
 
