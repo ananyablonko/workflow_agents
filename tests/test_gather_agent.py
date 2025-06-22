@@ -9,6 +9,7 @@ from pydantic import RootModel
 from google.adk.agents import LlmAgent, SequentialAgent
 from agent_tester import AgentTester
 from gather_agent import GatherAgent
+from google.adk.agents.callback_context import CallbackContext
 
 async def test_gather_agent():
     class ListModel(RootModel[list[str]]):
@@ -19,12 +20,12 @@ async def test_gather_agent():
         model="gemini-2.0-flash",
         instruction = """
     Continue the input into a 3 item pattern.
-    "A" -> ["A","B","C"]
-    "Y" -> ["Y","Z","A"]
     "5" -> ["5","6","7"]
+    "42" -> ["42","43","44"]
+    Always 3 items, always consecutive.
     """,
         output_schema=ListModel,
-        output_key='list',
+        output_key='list_key',
         disallow_transfer_to_parent=True,
         disallow_transfer_to_peers=True,
     )
@@ -33,29 +34,28 @@ async def test_gather_agent():
 
     gather = GatherAgent(
         name="TestGatherAgent",
-        agent=splitter.model_copy(update={'name': 'pattern_continuist_2'}),
         input_key="list",
         output_key="gather_output",
+        sub_agents=[splitter],
+        key_agent_name=splitter.name
     )
 
-    app_agent = SequentialAgent(name='TestAgent', sub_agents=[splitter, gather])
-
-    start = '1'
-    expected_output = {('1', '2', '3'), ('2', '3', '4'), ('3', '4', '5')}
+    expected_output = {tuple(str(j) for j in range(i, i + 3)) for i in range(20)}
 
     agent = AgentTester(
-        agent=app_agent,
+        initial_state={"list": [str(i) for i in range(20)]},
+        agent=gather,
         check=lambda e: True,
         extract=lambda e: e.actions.state_delta
     )
-    async for state_delta in agent.run(start):
-        if splitter.output_key in state_delta:
-            splitter_output = state_delta[splitter.output_key]
+    async for state_delta in agent.run(""):
+        if gather.output_key in state_delta:
+            gather_output = state_delta[gather.output_key]
+        else:
+            _, splitter_output = state_delta.popitem()
             assert isinstance(splitter_output, list)
             assert tuple(splitter_output) in expected_output
-        else:
-            assert gather.output_key in state_delta
-            gather_output = state_delta[gather.output_key]
+            
 
     assert agent.session is not None
     res = agent.session.state.get(gather.output_key)
