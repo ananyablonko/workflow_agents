@@ -54,12 +54,12 @@ class GatherAgent(BaseAgent):
         ])
 
         res: list = [None for _ in range(len(prompts))]
-        keys: list = [None for _ in range(len(prompts))]
+        keys = set()
         async for event in _merge_agent_run([ctx.agent.run_async(ctx) for ctx in contexts]):
             if event.branch and event.author.startswith(self.key_agent_name) and event.author in event.actions.state_delta:
                 idx = int(re.findall(fr'(?<={self.agent.name}_)\d+', event.branch)[-1])
                 res[idx] = deepcopy(event.actions.state_delta[event.author])
-                keys[idx] = event.author
+                keys.add(event.author)
             yield event
 
         for key in keys:
