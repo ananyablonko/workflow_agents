@@ -10,8 +10,8 @@ from google.genai import types
 
 from verbose_agent import VerboseAgent
 
-# import logging
-# logging.basicConfig(level=logging.INFO)
+import logging
+logging.basicConfig(level=logging.INFO)
 
 @pytest.mark.asyncio
 async def test_verbose_agent():

@@ -18,7 +18,6 @@ def VerboseAgent(
                 content=types.Content(role="model", parts=[types.Part(text=before_agent_message or f"Started Running '{ctx.agent.name}'")])
             )
             yield event
-            ctx.session.events.remove(event)
 
         async for event in ctx.agent.__class__._run_async_impl(ctx.agent, ctx):
             yield event
@@ -29,7 +28,6 @@ def VerboseAgent(
                 content=types.Content(role="model", parts=[types.Part(text=after_agent_message or f"Done Running '{ctx.agent.name}'")])
             )
             yield event
-            ctx.session.events.remove(event)
         
     agent.__dict__["_run_async_impl"] = _run_async_impl
     return agent
