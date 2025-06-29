@@ -1,16 +1,34 @@
 import __init__
 import asyncio
 import dotenv
+import pytest
+
 dotenv.load_dotenv()
 import logging, sys
 logger = logging.Logger(__name__)
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 from pydantic import RootModel
-from google.adk.agents import LlmAgent, SequentialAgent
-from agent_tester import AgentTester
+from google.adk.agents import LlmAgent
 from gather_agent import GatherAgent
 from google.adk.agents.callback_context import CallbackContext
 
+from ..utils.adk.app import AdkApp
+from ..utils.adk.tester import create_test_session
+from ..utils.text.printing import shorten
+
+async def display_state(callback_context: CallbackContext) -> None:
+    logger.debug(
+    f"""user_content={shorten(callback_context.user_content, 150)}
+
+invocation_id={shorten(callback_context.invocation_id, 150)}
+
+agent_name={shorten(callback_context.agent_name, 150)}
+
+state={shorten(callback_context.state.to_dict(), 150)}
+
+""")
+
+@pytest.mark.asyncio
 async def test_gather_agent():
     class ListModel(RootModel[list[str]]):
         pass
@@ -28,6 +46,7 @@ async def test_gather_agent():
         output_key='list_key',
         disallow_transfer_to_parent=True,
         disallow_transfer_to_peers=True,
+        after_agent_callback=display_state
     )
 
     assert splitter.output_key
@@ -39,16 +58,19 @@ async def test_gather_agent():
         sub_agents=[splitter],
         key_agent_name=splitter.name
     )
+    n_runs = 4
 
-    expected_output = {tuple(str(j) for j in range(i, i + 3)) for i in range(20)}
+    expected_output = {tuple(str(j) for j in range(i, i + 3)) for i in range(n_runs)}
 
-    agent = AgentTester(
-        initial_state={"list": [str(i) for i in range(20)]},
+    session = await create_test_session(AdkApp(
+        name="TestGather",
         agent=gather,
+        initial_state={"list": [str(i) for i in range(n_runs)]},
         check=lambda e: True,
         extract=lambda e: e.actions.state_delta
-    )
-    async for state_delta in agent.run(""):
+    ))
+
+    async for state_delta in session.run(""):
         if gather.output_key in state_delta:
             gather_output = state_delta[gather.output_key]
         else:
@@ -57,8 +79,7 @@ async def test_gather_agent():
             assert tuple(splitter_output) in expected_output
             
 
-    assert agent.session is not None
-    res = agent.session.state.get(gather.output_key)
+    res = session.state.get(gather.output_key)
     assert gather_output == res
     assert isinstance(res, list)
     assert set([tuple(x) for x in res]) == expected_output

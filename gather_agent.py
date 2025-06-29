@@ -2,7 +2,7 @@ import asyncio
 from pydantic import BaseModel
 from typing import AsyncGenerator, Optional, Any
 from typing_extensions import override
-from google.adk.agents import BaseAgent, LlmAgent, ParallelAgent
+from google.adk.agents import BaseAgent
 from google.adk.agents.invocation_context import InvocationContext
 from google.adk.events import Event, EventActions
 from google.adk.agents.parallel_agent import _merge_agent_run
@@ -12,23 +12,11 @@ from copy import deepcopy
 
 import re
 
-def get_output_key(agent: BaseAgent) -> str:
-    key = None
-    if isinstance(agent, LlmAgent):
-        key = agent.output_key
-    elif agent.sub_agents and not isinstance(agent, ParallelAgent):
-        key = get_output_key(agent.sub_agents[-1])
-    else:
-        raise NotImplementedError(f"{get_output_key.__name__} is only valid for Agents with an output key")
-    if key is None:
-        raise ValueError("Agent does not have an output key")
-    return key
-
 
 class GatherAgent(BaseAgent):
     input_key: str
     output_key: str
-    key_agent_name: str
+    key_agent_name: str | None = None
 
     @property
     def agent(self):
@@ -56,10 +44,15 @@ class GatherAgent(BaseAgent):
         res: list = [None for _ in range(len(prompts))]
         keys = set()
         async for event in _merge_agent_run([ctx.agent.run_async(ctx) for ctx in contexts]):
-            if event.branch and event.author.startswith(self.key_agent_name) and event.author in event.actions.state_delta:
-                idx = int(re.findall(fr'(?<={self.agent.name}_)\d+', event.branch)[-1])
-                res[idx] = deepcopy(event.actions.state_delta[event.author])
-                keys.add(event.author)
+            if not event.branch or event.author not in event.actions.state_delta:
+                continue
+            idx_match = re.match(fr'{self.key_agent_name or self.agent.name}_(\d+)', event.author)
+            if idx_match is None:
+                continue
+
+            idx = int(idx_match.group(1))
+            res[idx] = deepcopy(event.actions.state_delta[event.author])
+            keys.add(event.author)
             yield event
 
         for key in keys:
@@ -79,17 +72,21 @@ class GatherAgent(BaseAgent):
 
     async def _branch_context(self, old_ctx: InvocationContext, *, idx: int, prompt: Any, width: int) -> InvocationContext:
         # rename the agent to have the branch idx in its name (and consequently its branch), and copy user contents to allow appending to it in branch only
+        
+        agent = self.rename_agent_tree(self.agent, idx, width)
+        branch = f"{old_ctx.branch}.{agent.name}"
 
         ctx = old_ctx.model_copy(
             update=dict(
-                agent=self.rename_agent_tree(self.agent, idx, width),
+                branch=branch,
+                agent=agent,
                 user_content=old_ctx.user_content.model_copy(deep=True) if old_ctx.user_content else types.Content(role="user", parts=[]),
             )
         )
         text: str = prompt.model_dump_json() if isinstance(prompt, BaseModel) else str(prompt)
         event = Event(
             author="user",
-            branch=f"{old_ctx.branch}.{ctx.agent.name}",  # event only visible to one instance
+            branch=branch,  # event only visible to one instance
             content=Content(
                 role="user",
                 parts=[Part(text=text)],
@@ -105,7 +102,7 @@ class GatherAgent(BaseAgent):
     def rename_agent_tree(self, agent: BaseAgent, idx: int, width: int) -> BaseAgent:
         new_agent = agent.model_copy()
         new_name = self.get_unique_name(idx, width, new_agent.name)
-        if new_agent.name == self.key_agent_name:
+        if new_agent.name == (self.key_agent_name or self.agent.name):
             setattr(new_agent, "output_key", new_name)
         new_agent.name = new_name
         

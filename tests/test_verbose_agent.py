@@ -1,6 +1,7 @@
 import __init__
 
 import asyncio
+import pytest
 
 from google.adk.agents import LlmAgent
 from google.adk.runners import Runner
@@ -12,7 +13,7 @@ from verbose_agent import VerboseAgent
 # import logging
 # logging.basicConfig(level=logging.INFO)
 
-
+@pytest.mark.asyncio
 async def test_verbose_agent():
     agent = VerboseAgent(LlmAgent(
             name='greeter',
