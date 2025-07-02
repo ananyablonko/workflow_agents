@@ -6,11 +6,7 @@ from google.adk.agents import BaseAgent
 from google.adk.agents.invocation_context import InvocationContext
 from google.adk.events import Event, EventActions
 from google.adk.agents.parallel_agent import _merge_agent_run
-from google.genai.types import Content, Part
 from google.genai import types
-from copy import deepcopy
-
-import re
 
 
 class GatherAgent(BaseAgent):
@@ -41,28 +37,15 @@ class GatherAgent(BaseAgent):
             for i, prompt in enumerate(prompts)
         ])
 
-        res: list = [None for _ in range(len(prompts))]
-        keys = set()
         async for event in _merge_agent_run([ctx.agent.run_async(ctx) for ctx in contexts]):
-            if not event.branch or event.author not in event.actions.state_delta:
-                continue
-            idx_match = re.match(fr'{self.key_agent_name or self.agent.name}_(\d+)', event.author)
-            if idx_match is None:
-                continue
-
-            idx = int(idx_match.group(1))
-            res[idx] = deepcopy(event.actions.state_delta[event.author])
-            keys.add(event.author)
             yield event
 
-        for key in keys:
-            invocation_context.session.state.pop(key, None)
+        res = [ctx.session.state.get(self.get_unique_name(i, w, self.key_agent_name), None) for i, ctx in enumerate(contexts)]
         
         event = Event(
             invocation_id=invocation_context.invocation_id,
             branch=invocation_context.branch,
             author=self.name,
-            content=types.Content(role='model', parts=[Part(text=str(res))]),
             actions=EventActions(state_delta={self.output_key: res}),
         )
         yield event
@@ -76,25 +59,22 @@ class GatherAgent(BaseAgent):
         agent = self.rename_agent_tree(self.agent, idx, width)
         branch = f"{old_ctx.branch}.{agent.name}"
 
-        ctx = old_ctx.model_copy(
-            update=dict(
-                branch=branch,
-                agent=agent,
-                user_content=old_ctx.user_content.model_copy(deep=True) if old_ctx.user_content else types.Content(role="user", parts=[]),
-            )
-        )
-        text: str = prompt.model_dump_json() if isinstance(prompt, BaseModel) else str(prompt)
+        text_part = types.Part(text=prompt.model_dump_json() if isinstance(prompt, BaseModel) else str(prompt))
         event = Event(
             author="user",
             branch=branch,  # event only visible to one instance
-            content=Content(
+            content=types.Content(
                 role="user",
-                parts=[Part(text=text)],
+                parts=[text_part],
             ),
         )
-        
-        if ctx.user_content is not None and ctx.user_content.parts is not None:
-            ctx.user_content.parts.append(types.Part(text=text))
+
+        ctx = old_ctx.model_copy(
+            update=dict(
+                branch=branch, agent=agent,
+                user_content=types.Content(role="user", parts=((old_ctx.user_content or types.Content()).parts or []) + [text_part]),
+            )
+        )
        
         await ctx.session_service.append_event(ctx.session, event)
         return ctx

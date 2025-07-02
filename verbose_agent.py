@@ -14,6 +14,7 @@ def VerboseAgent(
     async def _run_async_impl(ctx: InvocationContext) -> AsyncGenerator[Event, None]:
         if before_agent_message is not None:
             event = Event(
+                partial=True,
                 author="system",
                 content=types.Content(role="model", parts=[types.Part(text=before_agent_message or f"Started Running '{ctx.agent.name}'")])
             )
@@ -24,6 +25,7 @@ def VerboseAgent(
 
         if after_agent_message is not None:
             event = Event(
+                partial=True,
                 author="system",
                 content=types.Content(role="model", parts=[types.Part(text=after_agent_message or f"Done Running '{ctx.agent.name}'")])
             )

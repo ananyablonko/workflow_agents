@@ -12,11 +12,12 @@ from google.adk.agents import LlmAgent
 from gather_agent import GatherAgent
 from google.adk.agents.callback_context import CallbackContext
 
-from ..utils.adk.app import AdkApp
-from ..utils.adk.tester import create_test_session
-from ..utils.text.printing import shorten
+from utils.adk.app import AdkApp
+from utils.adk.tester import create_test_session
+from utils.text.printing import shorten
 
 async def display_state(callback_context: CallbackContext) -> None:
+    callback_context.state[callback_context.agent_name] = callback_context.state[callback_context.agent_name].copy()
     logger.debug(
     f"""user_content={shorten(callback_context.user_content, 150)}
 

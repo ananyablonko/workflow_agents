@@ -34,7 +34,7 @@ async def test_verbose_agent():
     message = types.Content(role="user", parts=[types.Part(text="Hi")])
     responses = []
     async for event in runner.run_async(user_id="0", session_id="0", new_message=message):
-        if event.is_final_response() and event.content and event.content.parts:
+        if (event.partial or event.is_final_response()) and event.content and event.content.parts:
             print(event.content.parts[0].text)
             responses.append(event.content.parts[0].text)
     
