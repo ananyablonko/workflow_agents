@@ -16,7 +16,7 @@ def VerboseAgent(
             event = Event(
                 partial=True,
                 author="system",
-                content=types.Content(role="model", parts=[types.Part(text=before_agent_message or f"Started Running '{ctx.agent.name}'")])
+                content=types.Content(role="model", parts=[types.Part(text=f"[{ctx.agent.name}]: {before_agent_message or 'Started Running'}")])
             )
             yield event
 
@@ -27,7 +27,7 @@ def VerboseAgent(
             event = Event(
                 partial=True,
                 author="system",
-                content=types.Content(role="model", parts=[types.Part(text=after_agent_message or f"Done Running '{ctx.agent.name}'")])
+                content=types.Content(role="model", parts=[types.Part(text=f"[{ctx.agent.name}]: {after_agent_message or 'Done Running'}")])
             )
             yield event
         
