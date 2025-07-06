@@ -2,5 +2,4 @@
 *cache*
 .*
 !.gitignore
-.*
-!.gitignore
+*.ipynb

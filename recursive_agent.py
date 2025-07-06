@@ -6,7 +6,8 @@ from google.adk.agents import BaseAgent
 from google.adk.agents.invocation_context import InvocationContext
 from google.adk.events import Event
 
-from .gather_agent import GatherAgent, get_output_key
+from .gather_agent import GatherAgent
+from .utils.adk.state import get_output_key
 
 
 class RecursiveAgent(BaseAgent):
@@ -76,8 +77,9 @@ class RecursiveAgent(BaseAgent):
         # ------------ 3. recurse via GatherAgent ---------------------- #
         gather = GatherAgent(
             name=f"{self.name}_gather_d{self.max_depth}",
-            agent=self.model_copy(update=dict(name=f"{self.name}_d{self.max_depth-1}", max_depth=self.max_depth - 1)),
+            sub_agents=[self.model_copy(update=dict(name=f"{self.name}_d{self.max_depth-1}", max_depth=self.max_depth - 1))],
             input_key=self.input_key,
+            output_key=f"{self.name}_gather_d{self.max_depth}"
         )
 
         gather_ctx = ctx.model_copy(
