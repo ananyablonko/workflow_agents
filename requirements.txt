@@ -1,1 +1,3 @@
 google-adk
+pytest
+pytest-asyncio
