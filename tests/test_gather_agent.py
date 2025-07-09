@@ -3,10 +3,12 @@ import asyncio
 import pytest
 import json
 import random
+from itertools import chain
 
 from google.adk.agents import SequentialAgent, LoopAgent, ParallelAgent
 from google.adk.events import Event, EventActions
 from google.adk.agents.invocation_context import InvocationContext
+from google.adk.agents.callback_context import CallbackContext
 from google.genai import types
 
 from gather_agent import GatherAgent
@@ -376,6 +378,45 @@ async def test_gather_agent_tree():
     assert all_leaf_outputs == expected_output
 
 
+@pytest.mark.asyncio
+async def test_recursive_agent():
+    def seven_boom(callback_context: CallbackContext) -> None:
+        agent_output = callback_context.state['gather_output']
+        new_input = chain(*[json.loads(x) for x in agent_output['mock_agent']])
+        filtered = [x for x in new_input if '7' not in x and int(x) % 7 != 0]
+        callback_context.state['numbers'] = filtered
+
+    gather_agent = GatherAgent(
+        name='gather',
+        sub_agents=[MockAgent(mock_response=mock_response)],
+        input_key='numbers',
+        output_key='gather_output',
+        after_agent_callback=seven_boom,
+    )
+
+    recursive_agent = LoopAgent(
+        name='recursive_agent',
+        sub_agents=[gather_agent],
+        max_iterations=4
+    )
+
+    session = await create_test_session(AdkApp(
+        agent=recursive_agent,
+        name="test_recursive_agent",
+        initial_state={'numbers': ['3']},
+        check=lambda _: True,
+        extract=lambda e: e.actions.state_delta,
+    ))
+
+    expected_output = {json.dumps([str(j) for j in range(i, i + 3)]) for i in [3, 4, 5, 6, 8, 9, 10]}
+
+    async for state_delta in session.run(""):
+        if 'numbers' not in state_delta and gather_agent.output_key not in state_delta:
+            subagent_output = next((v for v in iter(state_delta.values())), None)
+            if subagent_output and isinstance(subagent_output, str):
+                assert subagent_output in expected_output
+
+
 if __name__ == '__main__':
     async def run_all_tests():
         await test_gather_agent_text_input()
@@ -385,5 +426,6 @@ if __name__ == '__main__':
         await test_gather_agent_with_sequential_agent()
         await test_gather_agent_with_gather_agent()
         await test_gather_agent_tree()
+        await test_recursive_agent()
         
     asyncio.run(run_all_tests())
