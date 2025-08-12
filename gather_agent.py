@@ -160,7 +160,8 @@ class GatherAgent(BaseAgent):
         """
         This function serves multiple purposes:
         * it tracks which LlmAgents live in the sub-agent's tree so that we can save their outputs to the state without having them override one another.
-        Note that 
+        Note that it uses output_key and might override any existing output_keys.
+        * it accumulates all agents that can have output keys in a set, so that we may gather their output into the gather agent's output key in the state (if present).
         """
         is_gather = isinstance(agent, GatherAgent)
         new_agent = agent.model_copy()
